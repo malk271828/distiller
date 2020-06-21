@@ -27,15 +27,23 @@ from torch.utils.data.sampler import Sampler
 import numpy as np
 import distiller
 
+# GeoHao's pytorch ssd
+from vision.utils.misc import str2bool, Timer, freeze_net_layers, store_labels
+from vision.ssd.ssd import MatchPrior
+from vision.ssd.data_preprocessing import TrainAugmentation, TestTransform
+from vision.datasets.voc_dataset import VOCDataset
+from vision.datasets.open_images import OpenImagesDataset
 
-DATASETS_NAMES = ['imagenet', 'cifar10', 'mnist']
+DATASETS_NAMES = ['imagenet', 'cifar10', 'mnist', "voc"]
 
 
 def classification_dataset_str_from_arch(arch):
     if 'cifar' in arch:
         dataset = 'cifar10' 
     elif 'mnist' in arch:
-        dataset = 'mnist' 
+        dataset = 'mnist'
+    elif "ssd" in arch:
+        dataset = "voc"
     else:
         dataset = 'imagenet'
     return dataset
@@ -44,11 +52,14 @@ def classification_dataset_str_from_arch(arch):
 def classification_num_classes(dataset):
     return {'cifar10': 10,
             'mnist': 10,
-            'imagenet': 1000}.get(dataset, None)
+            'imagenet': 1000,
+            "voc": 21}.get(dataset, None)
 
 
 def classification_get_input_shape(dataset):
-    if dataset == 'imagenet':
+    if dataset == "voc":
+        return 1, 3, 300, 300
+    elif dataset == 'imagenet':
         return 1, 3, 224, 224
     elif dataset == 'cifar10':
         return 1, 3, 32, 32
@@ -61,12 +72,13 @@ def classification_get_input_shape(dataset):
 def __dataset_factory(dataset):
     return {'cifar10': cifar10_get_datasets,
             'mnist': mnist_get_datasets,
-            'imagenet': imagenet_get_datasets}.get(dataset, None)
+            'imagenet': imagenet_get_datasets,
+            "voc": voc_get_datasets }.get(dataset, None)
 
 
 def load_data(dataset, data_dir, batch_size, workers, validation_split=0.1, deterministic=False,
               effective_train_size=1., effective_valid_size=1., effective_test_size=1.,
-              fixed_subset=False, sequential=False):
+              fixed_subset=False, sequential=False, config=None):
     """Load a dataset.
 
     Args:
@@ -94,7 +106,8 @@ def load_data(dataset, data_dir, batch_size, workers, validation_split=0.1, dete
                             effective_valid_size=effective_valid_size, 
                             effective_test_size=effective_test_size,
                             fixed_subset=fixed_subset,
-                            sequential=sequential)
+                            sequential=sequential,
+                            config=config)
 
 
 def mnist_get_datasets(data_dir):
@@ -184,6 +197,24 @@ def imagenet_get_datasets(data_dir):
 
     return train_dataset, test_dataset
 
+def voc_get_datasets(data_dir, config):
+    """
+    load pascal voc dataset
+    """
+    train_transform = TrainAugmentation(config.image_size, config.image_mean, config.image_std)
+    target_transform = MatchPrior(config.priors, config.center_variance,
+                                  config.size_variance, 0.5)
+    test_transform = TestTransform(config.image_size, config.image_mean, config.image_std)
+
+    # memo: VOCDataSet.__item__ does not support multiprocessing
+    # https://github.com/pytorch/pytorch/issues/8976
+    train_dataset = VOCDataset(data_dir, transform=train_transform,
+                               target_transform=target_transform)
+
+    val_dataset = VOCDataset(data_dir, transform=test_transform,
+                             target_transform=target_transform, is_test=True)
+
+    return train_dataset, val_dataset
 
 def __image_size(dataset):
     # un-squeeze is used here to add the batch dimension (value=1), which is missing
@@ -263,8 +294,15 @@ def _get_sampler(data_source, effective_size, fixed_subset=False, sequential=Fal
 
 def get_data_loaders(datasets_fn, data_dir, batch_size, num_workers, validation_split=0.1, deterministic=False,
                      effective_train_size=1., effective_valid_size=1., effective_test_size=1., fixed_subset=False,
-                     sequential=False):
-    train_dataset, test_dataset = datasets_fn(data_dir)
+                     sequential=False, config=None):
+    if config is not None:
+        train_dataset, test_dataset = datasets_fn(data_dir, config)
+    else:
+        train_dataset, test_dataset = datasets_fn(data_dir)
+
+    label_file = "models/voc-model-labels.txt"
+    store_labels(label_file, train_dataset.class_names)
+    num_classes = len(train_dataset.class_names)
 
     worker_init_fn = None
     if deterministic:

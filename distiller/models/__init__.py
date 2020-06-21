@@ -16,14 +16,24 @@
 
 """This package contains ImageNet and CIFAR image classification models for pytorch"""
 
+import os
+import sys
 import torch
 import torchvision.models as torch_models
 from . import cifar10 as cifar10_models
 from . import mnist as mnist_models
 from . import imagenet as imagenet_extra_models
 import pretrainedmodels
-
 from distiller.utils import set_model_input_shape_attr
+
+from vision.ssd.config import vgg_ssd_config
+from vision.ssd.config import mobilenetv1_ssd_config
+from vision.ssd.config import squeezenet_ssd_config
+from vision.ssd.vgg_ssd import create_vgg_ssd, create_vgg_ssd_predictor
+from vision.ssd.mobilenetv1_ssd import create_mobilenetv1_ssd, create_mobilenetv1_ssd_predictor
+from vision.ssd.mobilenetv1_ssd_lite import create_mobilenetv1_ssd_lite, create_mobilenetv1_ssd_lite_predictor
+from vision.ssd.squeezenet_ssd_lite import create_squeezenet_ssd_lite, create_squeezenet_ssd_lite_predictor
+from vision.ssd.mobilenet_v2_ssd_lite import create_mobilenetv2_ssd_lite, create_mobilenetv2_ssd_lite_predictor
 
 import logging
 msglogger = logging.getLogger()
@@ -48,9 +58,9 @@ MNIST_MODEL_NAMES = sorted(name for name in mnist_models.__dict__
                            if name.islower() and not name.startswith("__")
                            and callable(mnist_models.__dict__[name]))
 
+SSD_MODEL_NAMES = ['vgg16-ssd', 'mb1-ssd', 'mb1-ssd-lite', 'sq-ssd-lite', 'mb2-ssd-lite']
 ALL_MODEL_NAMES = sorted(map(lambda s: s.lower(),
-                            set(IMAGENET_MODEL_NAMES + CIFAR10_MODEL_NAMES + MNIST_MODEL_NAMES)))
-
+                            set(IMAGENET_MODEL_NAMES + CIFAR10_MODEL_NAMES + MNIST_MODEL_NAMES + SSD_MODEL_NAMES)))
 
 def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
     """Create a pytorch model based on the model architecture and dataset
@@ -69,6 +79,7 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
     model = None
     dataset = dataset.lower()
     cadene = False
+    config = None
     if dataset == 'imagenet':
         if arch in RESNET_SYMS:
             model = imagenet_extra_models.__dict__[arch](pretrained=pretrained)
@@ -103,6 +114,30 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
             model = mnist_models.__dict__[arch]()
         except KeyError:
             raise ValueError("Model {} is not supported for dataset MNIST".format(arch))
+    elif dataset == "voc":
+        class_num = 21
+        if arch == 'vgg16-ssd':
+            model = create_vgg_ssd(class_num, is_test=True)
+            path = "models/" + "vgg16-ssd-mp-0_7726.pth"
+            config = vgg_ssd_config
+        elif arch == 'mb1-ssd':
+            model = create_mobilenetv1_ssd(class_num, is_test=True)
+            path = "models/" + "mobilenet_v1_with_relu_69_5.pth"
+            config = mobilenetv1_ssd_config
+        elif arch == 'mb1-ssd-lite':
+            model = create_mobilenetv1_ssd_lite(class_num, is_test=True)
+            config = mobilenetv1_ssd_config
+        elif arch == 'sq-ssd-lite':
+            model = create_squeezenet_ssd_lite(class_num, is_test=True)
+            config = squeezenet_ssd_config
+        elif arch == 'mb2-ssd-lite':
+            model = create_mobilenetv2_ssd_lite(class_num, width_mult=args.mb2_width_mult, is_test=True)
+            config = mobilenetv1_ssd_config
+        else:
+            logging.fatal("The net type is wrong. It should be one of vgg16-ssd, mb1-ssd and mb1-ssd-lite.")
+            sys.exit(1)
+        if pretrained:
+            model.load(path)
     else:
         raise ValueError('Could not recognize dataset {}'.format(dataset))
 
@@ -128,4 +163,4 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
     else:
         set_model_input_shape_attr(model, dataset=dataset)
 
-    return model.to(device)
+    return model.to(device), config or model.to(device)
