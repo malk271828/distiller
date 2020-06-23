@@ -110,7 +110,7 @@ def load_data(dataset, data_dir, batch_size, workers, validation_split=0.1, dete
                             config=config)
 
 
-def mnist_get_datasets(data_dir):
+def mnist_get_datasets(data_dir, config=None):
     """Load the MNIST dataset."""
     train_transform = transforms.Compose([
         transforms.ToTensor(),
@@ -129,7 +129,7 @@ def mnist_get_datasets(data_dir):
     return train_dataset, test_dataset
 
 
-def cifar10_get_datasets(data_dir):
+def cifar10_get_datasets(data_dir, config=None):
     """Load the CIFAR10 dataset.
 
     The original training dataset is split into training and validation sets (code is
@@ -168,7 +168,7 @@ def cifar10_get_datasets(data_dir):
     return train_dataset, test_dataset
 
 
-def imagenet_get_datasets(data_dir):
+def imagenet_get_datasets(data_dir, config=None):
     """
     Load the ImageNet dataset.
     """
@@ -301,8 +301,9 @@ def get_data_loaders(datasets_fn, data_dir, batch_size, num_workers, validation_
         train_dataset, test_dataset = datasets_fn(data_dir)
 
     label_file = "models/voc-model-labels.txt"
-    store_labels(label_file, train_dataset.class_names)
-    num_classes = len(train_dataset.class_names)
+    if hasattr(train_dataset, "class_names"):
+        store_labels(label_file, train_dataset.class_names)
+        num_classes = len(train_dataset.class_names)
 
     worker_init_fn = None
     if deterministic:
