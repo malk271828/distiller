@@ -25,6 +25,8 @@ from . import mnist as mnist_models
 from . import imagenet as imagenet_extra_models
 import pretrainedmodels
 from distiller.utils import set_model_input_shape_attr
+from colorama import *
+init()
 
 from vision.ssd.config import vgg_ssd_config
 from vision.ssd.config import mobilenetv1_ssd_config
@@ -137,6 +139,7 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
             logging.fatal("The net type is wrong. It should be one of vgg16-ssd, mb1-ssd and mb1-ssd-lite.")
             sys.exit(1)
         if pretrained:
+            msglogger.info(Fore.CYAN + "pretrained model has been loaded: {0}".format(path) + Style.RESET_ALL)
             model.load(path)
     else:
         raise ValueError('Could not recognize dataset {}'.format(dataset))
