@@ -120,11 +120,11 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
         class_num = 21
         if arch == 'vgg16-ssd':
             model = create_vgg_ssd(class_num, is_test=True)
-            path = "models/" + "vgg16-ssd-mp-0_7726.pth"
+            basenet_path = "models/" + "vgg16_reducedfc.pth"
             config = vgg_ssd_config
         elif arch == 'mb1-ssd':
             model = create_mobilenetv1_ssd(class_num, is_test=True)
-            path = "models/" + "mobilenet_v1_with_relu_69_5.pth"
+            basenet_path = "models/" + "mobilenet_v1_with_relu_69_5.pth"
             config = mobilenetv1_ssd_config
         elif arch == 'mb1-ssd-lite':
             model = create_mobilenetv1_ssd_lite(class_num, is_test=True)
@@ -139,8 +139,8 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
             logging.fatal("The net type is wrong. It should be one of vgg16-ssd, mb1-ssd and mb1-ssd-lite.")
             sys.exit(1)
         if pretrained:
-            msglogger.info(Fore.CYAN + "pretrained model has been loaded: {0}".format(path) + Style.RESET_ALL)
-            model.load(path)
+            msglogger.info(Fore.CYAN + "pretrained model has been loaded: {0}".format(basenet_path) + Style.RESET_ALL)
+            model.init_from_base_net(basenet_path)
     else:
         raise ValueError('Could not recognize dataset {}'.format(dataset))
 
