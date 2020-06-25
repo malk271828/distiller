@@ -166,4 +166,4 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
     else:
         set_model_input_shape_attr(model, dataset=dataset)
 
-    return model.to(device), config or model.to(device)
+    return model.to(device), config
