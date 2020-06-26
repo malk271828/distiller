@@ -25,6 +25,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torch.utils.data.sampler import Sampler
 import numpy as np
+from torch.utils.data import DataLoader, ConcatDataset
 import distiller
 
 # GeoHao's pytorch ssd
@@ -208,9 +209,11 @@ def voc_get_datasets(data_dir, config):
 
     # memo: VOCDataSet.__item__ does not support multiprocessing
     # https://github.com/pytorch/pytorch/issues/8976
-    train_dataset = VOCDataset(data_dir, transform=train_transform,
+    train_dataset1 = VOCDataset(data_dir, transform=train_transform,
                                target_transform=target_transform)
-
+    train_dataset2 = VOCDataset(data_dir.replace("07", "12"), transform=train_transform,
+                               target_transform=target_transform)
+    train_dataset = ConcatDataset([train_dataset1, train_dataset2])
     val_dataset = VOCDataset(data_dir, transform=test_transform,
                              target_transform=target_transform, is_test=True)
 
@@ -295,10 +298,7 @@ def _get_sampler(data_source, effective_size, fixed_subset=False, sequential=Fal
 def get_data_loaders(datasets_fn, data_dir, batch_size, num_workers, validation_split=0.1, deterministic=False,
                      effective_train_size=1., effective_valid_size=1., effective_test_size=1., fixed_subset=False,
                      sequential=False, config=None):
-    if config is not None:
-        train_dataset, test_dataset = datasets_fn(data_dir, config)
-    else:
-        train_dataset, test_dataset = datasets_fn(data_dir)
+    train_dataset, test_dataset = datasets_fn(data_dir, config)
 
     label_file = "models/voc-model-labels.txt"
     if hasattr(train_dataset, "class_names"):
