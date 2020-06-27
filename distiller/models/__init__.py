@@ -119,21 +119,21 @@ def create_model(pretrained, dataset, arch, parallel=True, device_ids=None):
     elif dataset == "voc":
         class_num = 21
         if arch == 'vgg16-ssd':
-            model = create_vgg_ssd(class_num, is_test=True)
+            model = create_vgg_ssd(class_num)
             basenet_path = "models/" + "vgg16_reducedfc.pth"
             config = vgg_ssd_config
         elif arch == 'mb1-ssd':
-            model = create_mobilenetv1_ssd(class_num, is_test=True)
+            model = create_mobilenetv1_ssd(class_num)
             basenet_path = "models/" + "mobilenet_v1_with_relu_69_5.pth"
             config = mobilenetv1_ssd_config
         elif arch == 'mb1-ssd-lite':
-            model = create_mobilenetv1_ssd_lite(class_num, is_test=True)
+            model = create_mobilenetv1_ssd_lite(class_num)
             config = mobilenetv1_ssd_config
         elif arch == 'sq-ssd-lite':
-            model = create_squeezenet_ssd_lite(class_num, is_test=True)
+            model = create_squeezenet_ssd_lite(class_num)
             config = squeezenet_ssd_config
         elif arch == 'mb2-ssd-lite':
-            model = create_mobilenetv2_ssd_lite(class_num, width_mult=args.mb2_width_mult, is_test=True)
+            model = create_mobilenetv2_ssd_lite(class_num, width_mult=args.mb2_width_mult)
             config = mobilenetv1_ssd_config
         else:
             logging.fatal("The net type is wrong. It should be one of vgg16-ssd, mb1-ssd and mb1-ssd-lite.")
