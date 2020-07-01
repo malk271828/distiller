@@ -60,7 +60,9 @@ def save_checkpoint(epoch, arch, model, optimizer=None, scheduler=None,
     fullpath = os.path.join(dir, filename)
     msglogger.info("Saving checkpoint to: %s" % fullpath)
     filename_best = 'best.pth.tar' if name is None else name + '_best.pth.tar'
+    raw_filename_best = 'raw_best.pth.tar' if name is None else name + '_best.pth.tar'
     fullpath_best = os.path.join(dir, filename_best)
+    raw_fullpath_best = os.path.join(dir, raw_filename_best)
 
     checkpoint = {}
     checkpoint['epoch'] = epoch
@@ -81,7 +83,7 @@ def save_checkpoint(epoch, arch, model, optimizer=None, scheduler=None,
     torch.save(checkpoint, fullpath)
     if is_best:
         shutil.copyfile(fullpath, fullpath_best)
-
+        model.save(raw_fullpath_best)
 
 def load_lean_checkpoint(model, chkpt_file, model_device=None):
     return load_checkpoint(model, chkpt_file, model_device=model_device,
