@@ -115,14 +115,14 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         if self.loss_wts.teacher == 0:
             with torch.no_grad():
-                self.last_teacher_logits = self.teacher(*inputs)
+                self.last_teacher_logits, _ = self.teacher(*inputs)
         else:
-            self.last_teacher_logits = self.teacher(*inputs)
+            self.last_teacher_logits, _ = self.teacher(*inputs)
 
-        out = self.student(*inputs)
-        self.last_students_logits = out.new_tensor(out, requires_grad=True)
+        confidence, localization = self.student(*inputs)
+        self.last_students_logits = confidence.new_tensor(confidence, requires_grad=True)
 
-        return out
+        return confidence, localization
 
     # Since the "forward" function isn't a policy callback, we use the epoch callbacks to toggle the
     # activation of distillation according the schedule defined by the user
