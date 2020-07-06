@@ -52,8 +52,8 @@ def add_distillation_args(argparser, arch_choices=None, enable_pretrained=False)
                        help='Weight for teacher vs. labels loss')
     group.add_argument('--kd-start-epoch', type=int, default=0, metavar='EPOCH_NUM',
                        help='Epoch from which to enable distillation')
-    group.add_argument('--loss_type', dest='loss_type', action='store_true', default="KL",
-                    help='specify distillation loss type')
+    group.add_argument('--kd-loss_type', dest='loss_type', default="KL",
+                       help='specify distillation loss type')
 
 class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
     """
@@ -160,7 +160,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
             distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
         else:
-            distillation_loss = F_pt.focal_loss_with_logits(self.last_students_logits/self.temperature, self.last_teacher_logits/self.temperature)
+            distillation_loss = F_pt.sigmoid_focal_loss(self.last_students_logits/self.temperature, self.last_teacher_logits/self.temperature)
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
