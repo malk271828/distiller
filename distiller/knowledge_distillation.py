@@ -20,7 +20,7 @@ from collections import namedtuple
 
 from .policy import ScheduledTrainingPolicy, PolicyLoss, LossComponent
 
-from pytorch_toolbelt.losses.functional import focal_loss_with_logits
+import pytorch_toolbelt.losses.functional as F_pt
 
 DistillationLossWeights = namedtuple('DistillationLossWeights',
                                      ['distill', 'student', 'teacher'])
@@ -159,7 +159,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
             distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
         else:
-            distillation_loss = focal_loss_with_logits(self.last_students_logits/self.temperature, self.last_teacher_logits/self.temperature)
+            distillation_loss = F_pt.focal_loss_with_logits(self.last_students_logits/self.temperature, self.last_teacher_logits/self.temperature)
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
