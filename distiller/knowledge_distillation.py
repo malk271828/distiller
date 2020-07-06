@@ -52,7 +52,8 @@ def add_distillation_args(argparser, arch_choices=None, enable_pretrained=False)
                        help='Weight for teacher vs. labels loss')
     group.add_argument('--kd-start-epoch', type=int, default=0, metavar='EPOCH_NUM',
                        help='Epoch from which to enable distillation')
-
+    group.add_argument('--loss_type', dest='loss_type', action='store_true', default="KL",
+                    help='specify distillation loss type')
 
 class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
     """
