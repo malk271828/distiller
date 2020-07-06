@@ -20,6 +20,8 @@ from collections import namedtuple
 
 from .policy import ScheduledTrainingPolicy, PolicyLoss, LossComponent
 
+import pytorch_toolbelt.losses.functional as F
+
 DistillationLossWeights = namedtuple('DistillationLossWeights',
                                      ['distill', 'student', 'teacher'])
 
@@ -85,7 +87,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
     """
     def __init__(self, student_model, teacher_model, temperature=1.0,
-                 loss_weights=DistillationLossWeights(0.5, 0.5, 0)):
+                 loss_weights=DistillationLossWeights(0.5, 0.5, 0), loss_type="KL"):
         super(KnowledgeDistillationPolicy, self).__init__()
 
         if loss_weights.teacher != 0:
@@ -98,6 +100,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.teacher = teacher_model
         self.temperature = temperature
         self.loss_wts = loss_weights
+        self.loss_type = loss_type
 
         self.last_students_logits = None
         self.last_teacher_logits = None
@@ -145,15 +148,18 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                                "Make sure to call KnowledgeDistillationPolicy.forward() in your script instead of "
                                "calling the model directly.")
 
-        # Calculate distillation loss
-        soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=1)
-        # soft_targets = F.softmax(self.cached_teacher_logits[minibatch_id] / self.temperature)
-        soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
+        if self.loss_type == "KL":
+            # Calculate distillation loss
+            soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=1)
+            # soft_targets = F.softmax(self.cached_teacher_logits[minibatch_id] / self.temperature)
+            soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
 
-        # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
-        # https://pytorch.org/docs/stable/nn.html#kldivloss
-        # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-        distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
+            # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
+            # https://pytorch.org/docs/stable/nn.html#kldivloss
+            # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
+            distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
+        else:
+            distillation_loss = F.focal_loss_with_logits(self.last_students_logits/self.temperature, self.last_teacher_logits/self.temperature)
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
