@@ -159,8 +159,10 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             # https://pytorch.org/docs/stable/nn.html#kldivloss
             # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
             distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
-        else:
+        elif self.loss_type == "Focal":
             distillation_loss = F_pt.sigmoid_focal_loss(self.last_students_logits/self.temperature, self.last_teacher_logits/self.temperature)
+        else:
+            raise Exception("Unknown distillation loss type")
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
