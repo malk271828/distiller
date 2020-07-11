@@ -175,9 +175,14 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
 
+        if self.verbose > 0:
+            print("last_students_logits shape:{0} range [{1}, {2}]".format(self.last_students_logits.shape, torch.min(self.last_students_logits), torch.max(self.last_students_logits)))
+            print("last_teacher_logits shape:{0} range [{1}, {2}]".format(self.last_teacher_logits.shape, torch.min(self.last_teacher_logits), torch.max(self.last_teacher_logits)))
+            print("soft_targets shape:{0} range [{1}, {2}]".format(soft_targets.shape, torch.min(soft_targets), torch.max(soft_targets)))
+
         if self.loss_type == "Focal":
             logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
-                                                       self.last_teacher_logits/self.temperature, reduction="none")
+                                                       soft_targets, reduction="none")
             pt = torch.exp(-logpt)
             focal_term = (1 - pt).pow(self.gamma)
             if self.normalized:
@@ -187,8 +192,6 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             overall_loss = focal_term * norm_factor * (self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss)
             overall_loss = overall_loss.mean()
             if self.verbose > 0:
-                print("last_students_logits range [{0}, {1}]".format(torch.min(self.last_students_logits), torch.max(self.last_students_logits)))
-                print("last_teacher_logits range [{0}, {1}]".format(torch.min(self.last_teacher_logits), torch.max(self.last_teacher_logits)))
                 print("logpt range: [{0}, {1}]".format(torch.min(logpt), torch.max(logpt)))
                 print("pt range: [{0}, {1}]".format(torch.min(pt), torch.max(pt)))
                 print("loss(reduced):", overall_loss)
