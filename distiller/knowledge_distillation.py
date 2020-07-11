@@ -106,6 +106,13 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.last_students_logits = None
         self.last_teacher_logits = None
 
+        # for Focal loss
+        self.gamma = 2
+        self.alpha = 0.25
+        self.normalized = False
+
+        self.verbose = 0
+
     def forward(self, *inputs):
         """
         Performs forward propagation through both student and teached models and caches the logits.
@@ -138,6 +145,14 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
     def before_backward_pass(self, model, epoch, minibatch_id, minibatches_per_epoch, loss, zeros_mask_dict,
                              optimizer=None):
+        """
+        References
+        ----------
+        Implementation of Focal Loss was hinted by:
+        https://github.com/BloodAxe/pytorch-toolbelt/blob/develop/pytorch_toolbelt/losses/functional.py#L10
+        https://github.com/qfgaohao/pytorch-ssd/blob/master/vision/nn/multibox_loss.py
+        https://pytorch.org/docs/stable/nn.functional.html
+        """
         # TODO: Consider adding 'labels' as an argument to this callback, so we can support teacher vs. labels loss
         # (Otherwise we can't do it with a sub-class of ScheduledTrainingPolicy)
 
@@ -149,24 +164,32 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                                "Make sure to call KnowledgeDistillationPolicy.forward() in your script instead of "
                                "calling the model directly.")
 
-        if self.loss_type == "KL":
-            # Calculate distillation loss
-            soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=1)
-            # soft_targets = F.softmax(self.cached_teacher_logits[minibatch_id] / self.temperature)
-            soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
+        # Calculate distillation loss
+        soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=1)
+        # soft_targets = F.softmax(self.cached_teacher_logits[minibatch_id] / self.temperature)
+        soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
 
-            # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
-            # https://pytorch.org/docs/stable/nn.html#kldivloss
-            # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-            distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
-        elif self.loss_type == "Focal":
-            distillation_loss = F_pt.sigmoid_focal_loss(self.last_students_logits/self.temperature, self.last_teacher_logits/self.temperature)
-        else:
-            raise Exception("Unknown distillation loss type")
+        # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
+        # https://pytorch.org/docs/stable/nn.html#kldivloss
+        # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
+        distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
 
-        overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss
+        if self.loss_type == "Focal":
+            logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
+                                                       self.last_teacher_logits/self.temperature, reduction="none")
+            pt = torch.exp(-logpt)
+            focal_term = (1 - pt).pow(self.gamma)
+            if self.normalized:
+                norm_factor = 1.0 / (focal_term.sum() + 1e-5)
+            else:
+                norm_factor = 1.0
+            overall_loss = focal_term * norm_factor * (self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss)
+            overall_loss = overall_loss.mean()
+        else:
+            overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss
+
         return PolicyLoss(overall_loss,
                           [LossComponent('Distill Loss', distillation_loss)])
