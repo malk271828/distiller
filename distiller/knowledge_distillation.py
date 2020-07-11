@@ -20,8 +20,6 @@ from collections import namedtuple
 
 from .policy import ScheduledTrainingPolicy, PolicyLoss, LossComponent
 
-import pytorch_toolbelt.losses.functional as F_pt
-
 DistillationLossWeights = namedtuple('DistillationLossWeights',
                                      ['distill', 'student', 'teacher'])
 
@@ -188,6 +186,10 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                 norm_factor = 1.0
             overall_loss = focal_term * norm_factor * (self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss)
             overall_loss = overall_loss.mean()
+            if self.verbose > 0:
+                print("logpt range: [{0}, {1}]".format(torch.min(logpt), torch.max(logpt)))
+                print("pt range: [{0}, {1}]".format(torch.min(pt), torch.max(pt)))
+                print("loss(reduced):", overall_loss)
         else:
             overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss
 
