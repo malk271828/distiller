@@ -175,7 +175,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
 
-        if self.verbose > 0:
+        if self.verbose > 1:
             print("last_students_logits shape:{0} range [{1}, {2}]".format(self.last_students_logits.shape, torch.min(self.last_students_logits), torch.max(self.last_students_logits)))
             print("last_teacher_logits shape:{0} range [{1}, {2}]".format(self.last_teacher_logits.shape, torch.min(self.last_teacher_logits), torch.max(self.last_teacher_logits)))
             print("soft_targets shape:{0} range [{1}, {2}]".format(soft_targets.shape, torch.min(soft_targets), torch.max(soft_targets)))
@@ -192,11 +192,17 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             overall_loss = focal_term * norm_factor * (self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss)
             overall_loss = overall_loss.mean()
             if self.verbose > 0:
-                print("logpt range: [{0}, {1}]".format(torch.min(logpt), torch.max(logpt)))
+                print("logpt shape:{0} range: [{1}, {2}]".format(logpt.shape, torch.min(logpt), torch.max(logpt)))
+                print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape ,torch.min(focal_term), torch.max(focal_term)))
+                print("norm_factor: {0}".format(norm_factor))
                 print("pt range: [{0}, {1}]".format(torch.min(pt), torch.max(pt)))
-                print("loss(reduced):", overall_loss)
         else:
             overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss
+
+        if self.verbose > 0:
+            print("loss: {0}".format(loss))
+            print("distillation_loss: {0}".format(distillation_loss))
+            print("overall_loss(reduced): {0}".format(overall_loss))
 
         return PolicyLoss(overall_loss,
                           [LossComponent('Distill Loss', distillation_loss)])
