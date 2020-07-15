@@ -158,7 +158,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         if not self.active:
             return None
-        confidence, labels = loss
+
         if self.last_teacher_logits is None or self.last_students_logits is None:
             raise RuntimeError("KnowledgeDistillationPolicy: Student and or teacher logits were not cached. "
                                "Make sure to call KnowledgeDistillationPolicy.forward() in your script instead of "
@@ -171,8 +171,9 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         batch_size = soft_targets.shape[0]
         num_class = soft_targets.shape[2]
-        # if len(loss.shape) == 1:
-        #     loss = loss.reshape(batch_size, -1)
+        if isinstance(loss, tuple):
+            _, labels = loss
+            target = torch.eye(num_class)[labels]
 
         # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
         # https://pytorch.org/docs/stable/nn.html#kldivloss
@@ -190,7 +191,6 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         if self.loss_type == "Focal":
             logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
                                                        soft_targets, reduction="none")
-            target = torch.eye(num_class)[labels]
             loss = F.binary_cross_entropy_with_logits(self.last_teacher_logits/self.temperature, target, reduction="none")
             pt = torch.exp(-logpt)
             focal_term = (1 - pt).pow(self.gamma)
