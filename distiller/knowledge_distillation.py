@@ -108,7 +108,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.alpha = 0.25
         self.normalized = False
 
-        self.verbose = 1
+        self.verbose = 0
 
     def forward(self, *inputs):
         """
@@ -171,9 +171,6 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         batch_size = soft_targets.shape[0]
         num_class = soft_targets.shape[2]
-        if isinstance(loss, tuple):
-            _, labels = loss
-            target = torch.eye(num_class)[labels]
 
         # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
         # https://pytorch.org/docs/stable/nn.html#kldivloss
@@ -189,6 +186,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             print("soft_targets shape:{0} range [{1}, {2}]".format(soft_targets.shape, torch.min(soft_targets), torch.max(soft_targets)))
 
         if self.loss_type == "Focal":
+            target = loss # rename
             logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
                                                        soft_targets, reduction="none")
             loss = F.binary_cross_entropy_with_logits(self.last_teacher_logits/self.temperature, target, reduction="none")
