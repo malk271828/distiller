@@ -23,7 +23,6 @@ from .policy import ScheduledTrainingPolicy, PolicyLoss, LossComponent
 DistillationLossWeights = namedtuple('DistillationLossWeights',
                                      ['distill', 'student', 'teacher'])
 
-
 def add_distillation_args(argparser, arch_choices=None, enable_pretrained=False):
     """
     Helper function to make it easier to add command line arguments for knowledge distillation to any script
@@ -109,7 +108,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.alpha = 0.25
         self.normalized = False
 
-        self.verbose = 0
+        self.verbose = 1
 
     def forward(self, *inputs):
         """
@@ -150,13 +149,16 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         https://github.com/BloodAxe/pytorch-toolbelt/blob/develop/pytorch_toolbelt/losses/functional.py#L10
         https://github.com/qfgaohao/pytorch-ssd/blob/master/vision/nn/multibox_loss.py
         https://pytorch.org/docs/stable/nn.functional.html
+
+        Convert class indicator into one-hot encoding without torch.nn.functional.one_hot:
+        https://blog.shikoan.com/pytorch-onehotencoding/
         """
         # TODO: Consider adding 'labels' as an argument to this callback, so we can support teacher vs. labels loss
         # (Otherwise we can't do it with a sub-class of ScheduledTrainingPolicy)
 
         if not self.active:
             return None
-
+        confidence, labels = loss
         if self.last_teacher_logits is None or self.last_students_logits is None:
             raise RuntimeError("KnowledgeDistillationPolicy: Student and or teacher logits were not cached. "
                                "Make sure to call KnowledgeDistillationPolicy.forward() in your script instead of "
@@ -167,10 +169,15 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         # soft_targets = F.softmax(self.cached_teacher_logits[minibatch_id] / self.temperature)
         soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
 
+        batch_size = soft_targets.shape[0]
+        num_class = soft_targets.shape[2]
+        # if len(loss.shape) == 1:
+        #     loss = loss.reshape(batch_size, -1)
+
         # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
         # https://pytorch.org/docs/stable/nn.html#kldivloss
         # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-        distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / soft_targets.shape[0]
+        distillation_loss = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / batch_size
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
@@ -183,12 +190,17 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         if self.loss_type == "Focal":
             logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
                                                        soft_targets, reduction="none")
+            target = torch.eye(num_class)[labels]
+            loss = F.binary_cross_entropy_with_logits(self.last_teacher_logits/self.temperature, target, reduction="none")
             pt = torch.exp(-logpt)
             focal_term = (1 - pt).pow(self.gamma)
             if self.normalized:
                 norm_factor = 1.0 / (focal_term.sum() + 1e-5)
             else:
                 norm_factor = 1.0
+            if self.verbose > 0:
+                print("target shape:{0} range:[{1}, {2}]".format(target.shape, torch.min(target), torch.max(target)))
+                print("loss shape:{0} range[{1}, {2}]".format(loss.shape, torch.min(loss), torch.max(loss)))
             overall_loss = focal_term * norm_factor * (self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss)
             overall_loss = overall_loss.mean()
             if self.verbose > 0:
@@ -200,7 +212,6 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss
 
         if self.verbose > 0:
-            print("loss: {0}".format(loss))
             print("distillation_loss: {0}".format(distillation_loss))
             print("overall_loss(reduced): {0}".format(overall_loss))
 
