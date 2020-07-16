@@ -170,7 +170,8 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
 
         batch_size = soft_targets.shape[0]
-        num_class = soft_targets.shape[2]
+        if isinstance(loss, tuple):
+            all_loss, classification_loss = loss
 
         # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
         # https://pytorch.org/docs/stable/nn.html#kldivloss
@@ -187,9 +188,11 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         if self.loss_type == "Focal":
             target = loss # rename
+
+            # compute focal term
             logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
                                                        soft_targets, reduction="none")
-            loss = F.binary_cross_entropy_with_logits(self.last_teacher_logits/self.temperature, target, reduction="none")
+            #loss = F.binary_cross_entropy_with_logits(self.last_teacher_logits/self.temperature, target, reduction="none")
             pt = torch.exp(-logpt)
             focal_term = (1 - pt).pow(self.gamma)
             if self.normalized:
@@ -197,13 +200,12 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             else:
                 norm_factor = 1.0
             if self.verbose > 0:
-                print("target shape:{0} range:[{1}, {2}]".format(target.shape, torch.min(target), torch.max(target)))
-                print("loss shape:{0} range[{1}, {2}]".format(loss.shape, torch.min(loss), torch.max(loss)))
-            overall_loss = focal_term * norm_factor * (self.loss_wts.student * loss + self.loss_wts.distill * distillation_loss)
-            overall_loss = overall_loss.mean()
+                print("classification_loss shape:{0} range[{1}, {2}]".format(classification_loss.shape, torch.min(classification_loss), torch.max(classification_loss)))
+            focal_classification_loss = focal_term * norm_factor * (self.loss_wts.student * classification_loss + self.loss_wts.distill * distillation_loss)
+            overall_loss = focal_classification_loss.sum() + all_loss
             if self.verbose > 0:
                 print("logpt shape:{0} range: [{1}, {2}]".format(logpt.shape, torch.min(logpt), torch.max(logpt)))
-                print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape ,torch.min(focal_term), torch.max(focal_term)))
+                print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
                 print("norm_factor: {0}".format(norm_factor))
                 print("pt range: [{0}, {1}]".format(torch.min(pt), torch.max(pt)))
         else:
