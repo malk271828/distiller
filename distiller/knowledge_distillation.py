@@ -174,6 +174,8 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         batch_size = soft_targets.shape[0]
         if isinstance(loss, tuple):
             regression_loss, classification_loss = loss
+            num_boxes = soft_targets.shape[1]
+            num_classes = soft_targets.shape[2]
 
         # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
         # https://pytorch.org/docs/stable/nn.html#kldivloss
@@ -201,8 +203,8 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                 norm_factor = 1.0
             if self.verbose > 0:
                 print("classification_loss shape:{0} range[{1}, {2}]".format(classification_loss.shape, torch.min(classification_loss), torch.max(classification_loss)))
-            focal_classification_loss = focal_term * norm_factor * (self.loss_wts.student * classification_loss + self.loss_wts.distill * kl_div_soft)
-            overall_loss = focal_classification_loss.sum() / 8732 + regression_loss.sum()
+            focal_classification_loss = norm_factor * (self.loss_wts.student * classification_loss + self.loss_wts.distill * kl_div_soft / num_boxes / num_classes)
+            overall_loss = focal_classification_loss.sum() + regression_loss.sum() #TODO
             if self.verbose > 0:
                 print("logpt shape:{0} range: [{1}, {2}]".format(logpt.shape, torch.min(logpt), torch.max(logpt)))
                 print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
@@ -217,6 +219,6 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         return PolicyLoss(overall_loss, [
                     LossComponent('KL Div', kl_div_soft),
-                    LossComponent('focal classification Loss', focal_classification_loss.sum()/8732),
+                    LossComponent('focal classification Loss', focal_classification_loss.sum()),
                     LossComponent('regression Loss', regression_loss.sum())
                 ])
