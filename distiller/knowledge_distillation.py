@@ -203,7 +203,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                                                         soft_targets, reduction="none")
             else:
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
-                focal_term = (1 - soft_log_probs.exp()).pow(self.gamma)
+                focal_term = (1 - classification_loss).pow(self.gamma)
 
             if self.normalized:
                 norm_factor = 1.0 / (focal_term.sum() + 1e-5)
@@ -212,7 +212,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             if self.verbose > 0:
                 print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
                 print("norm_factor: {0}".format(norm_factor))
-            focal_classification_loss = focal_term* norm_factor * (self.loss_wts.student * classification_loss.reshape(batch_size, num_boxes, num_classes) + self.loss_wts.distill * soft_targets)
+            focal_classification_loss = focal_term * norm_factor * (self.loss_wts.student * classification_loss + self.loss_wts.distill * soft_targets)
             overall_loss = focal_classification_loss.sum() + regression_loss.sum() #TODO
         else:
             overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * kl_div_soft
@@ -222,8 +222,12 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             print("overall_loss(reduced): {0}".format(overall_loss))
             print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
 
-        return PolicyLoss(overall_loss, [
-                    LossComponent('KL Div', kl_div_soft),
-                    LossComponent('focal classification Loss', focal_classification_loss.sum()),
-                    LossComponent('regression Loss', regression_loss.sum())
-                ])
+        if self.loss_type == "Focal":
+            return PolicyLoss(overall_loss, [
+                        LossComponent('focal classification Loss', focal_classification_loss.sum()),
+                        LossComponent('regression Loss', regression_loss.sum())
+                    ])
+        else:
+            return PolicyLoss(overall_loss, [
+                        LossComponent('kl_div_soft', kl_div_soft),
+                    ])
