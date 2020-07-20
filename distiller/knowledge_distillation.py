@@ -17,6 +17,8 @@
 import torch
 import torch.nn.functional as F
 from collections import namedtuple
+from colorama import *
+init()
 
 from .policy import ScheduledTrainingPolicy, PolicyLoss, LossComponent
 
@@ -110,7 +112,8 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.alpha = 0.25
         self.normalized = False
 
-        self.verbose = 0
+        self.binary = False
+        self.verbose = verbose
 
     def forward(self, *inputs):
         """
@@ -158,6 +161,9 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         # TODO: Consider adding 'labels' as an argument to this callback, so we can support teacher vs. labels loss
         # (Otherwise we can't do it with a sub-class of ScheduledTrainingPolicy)
 
+        if self.verbose > 0:
+            print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [in] -------------------------" + Style.RESET_ALL)
+
         if not self.active:
             return None
 
@@ -192,30 +198,29 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         if self.loss_type == "Focal":
             # compute focal term
-            logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
-                                                       soft_targets, reduction="none")
-            #loss = F.binary_cross_entropy_with_logits(self.last_teacher_logits/self.temperature, target, reduction="none")
-            pt = torch.exp(-logpt)
-            focal_term = (1 - pt).pow(self.gamma)
+            if self.binary:
+                logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
+                                                        soft_targets, reduction="none")
+            else:
+                # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
+                focal_term = (1 - soft_log_probs.exp()).pow(self.gamma)
+
             if self.normalized:
                 norm_factor = 1.0 / (focal_term.sum() + 1e-5)
             else:
                 norm_factor = 1.0
             if self.verbose > 0:
-                print("classification_loss shape:{0} range[{1}, {2}]".format(classification_loss.shape, torch.min(classification_loss), torch.max(classification_loss)))
-            focal_classification_loss = norm_factor * (self.loss_wts.student * classification_loss + self.loss_wts.distill * kl_div_soft / num_boxes / num_classes)
-            overall_loss = focal_classification_loss.sum() + regression_loss.sum() #TODO
-            if self.verbose > 0:
-                print("logpt shape:{0} range: [{1}, {2}]".format(logpt.shape, torch.min(logpt), torch.max(logpt)))
                 print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
                 print("norm_factor: {0}".format(norm_factor))
-                print("pt range: [{0}, {1}]".format(torch.min(pt), torch.max(pt)))
+            focal_classification_loss = focal_term* norm_factor * (self.loss_wts.student * classification_loss.reshape(batch_size, num_boxes, num_classes) + self.loss_wts.distill * soft_targets)
+            overall_loss = focal_classification_loss.sum() + regression_loss.sum() #TODO
         else:
             overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * kl_div_soft
 
         if self.verbose > 0:
             print("kl_div_soft: {0}".format(kl_div_soft))
             print("overall_loss(reduced): {0}".format(overall_loss))
+            print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
 
         return PolicyLoss(overall_loss, [
                     LossComponent('KL Div', kl_div_soft),
