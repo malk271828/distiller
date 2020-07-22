@@ -174,6 +174,8 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         # Calculate distillation loss
         soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=1)
+        soft_probs = soft_log_probs.exp() # same result to F.softmax(self.last_students_logits / self.temperature, dim=1)
+
         # soft_targets = F.softmax(self.cached_teacher_logits[minibatch_id] / self.temperature)
         soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
 
@@ -186,7 +188,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
         # https://pytorch.org/docs/stable/nn.html#kldivloss
         # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-        kl_div_soft = F.kl_div(soft_log_probs, soft_targets.detach(), size_average=False) / batch_size
+        kl_div_soft = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
@@ -195,6 +197,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             print("last_students_logits shape:{0} range [{1}, {2}]".format(self.last_students_logits.shape, torch.min(self.last_students_logits), torch.max(self.last_students_logits)))
             print("last_teacher_logits shape:{0} range [{1}, {2}]".format(self.last_teacher_logits.shape, torch.min(self.last_teacher_logits), torch.max(self.last_teacher_logits)))
             print("soft_targets shape:{0} range [{1}, {2}]".format(soft_targets.shape, torch.min(soft_targets), torch.max(soft_targets)))
+            print("soft_probs shape:{0} range:[{1}, {2}]".format(soft_probs.shape, torch.min(soft_probs), torch.max(soft_probs)))
 
         if self.loss_type == "Focal":
             # compute focal term
@@ -203,7 +206,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                                                         soft_targets, reduction="none")
             else:
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
-                focal_term = (1 - classification_loss).pow(self.gamma)
+                focal_term = torch.pow(1. - soft_probs, self.gamma)
 
             if self.normalized:
                 norm_factor = 1.0 / (focal_term.sum() + 1e-5)
@@ -218,7 +221,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * kl_div_soft
 
         if self.verbose > 0:
-            print("kl_div_soft: {0}".format(kl_div_soft))
+            print("kl_div_soft shape:{0} range:[{1}, {2}]".format(kl_div_soft.shape, torch.min(kl_div_soft), torch.max(kl_div_soft)))
             print("overall_loss(reduced): {0}".format(overall_loss))
             print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
 
