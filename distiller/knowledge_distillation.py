@@ -173,11 +173,9 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                                "calling the model directly.")
 
         # Calculate distillation loss
-        soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=1)
-        soft_probs = soft_log_probs.exp() # same result to F.softmax(self.last_students_logits / self.temperature, dim=1)
-
-        # soft_targets = F.softmax(self.cached_teacher_logits[minibatch_id] / self.temperature)
-        soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=1)
+        soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=2)
+        soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=2)
+        soft_probs = soft_log_probs.exp() # same result to F.softmax(self.last_students_logits / self.temperature, dim=2)
 
         batch_size = soft_targets.shape[0]
         if isinstance(loss, tuple):
@@ -185,19 +183,20 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             num_boxes = soft_targets.shape[1]
             num_classes = soft_targets.shape[2]
 
-        # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
-        # https://pytorch.org/docs/stable/nn.html#kldivloss
-        # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-        kl_div_soft = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
-
-        # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
-        # need to calculate again
-
         if self.verbose > 1:
             print("last_students_logits shape:{0} range [{1}, {2}]".format(self.last_students_logits.shape, torch.min(self.last_students_logits), torch.max(self.last_students_logits)))
             print("last_teacher_logits shape:{0} range [{1}, {2}]".format(self.last_teacher_logits.shape, torch.min(self.last_teacher_logits), torch.max(self.last_teacher_logits)))
             print("soft_targets shape:{0} range [{1}, {2}]".format(soft_targets.shape, torch.min(soft_targets), torch.max(soft_targets)))
             print("soft_probs shape:{0} range:[{1}, {2}]".format(soft_probs.shape, torch.min(soft_probs), torch.max(soft_probs)))
+
+        # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
+        # https://pytorch.org/docs/stable/nn.html#kldivloss
+        # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
+        soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
+        soft_ce = - soft_log_probs * soft_targets.detach()
+
+        # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
+        # need to calculate again
 
         if self.loss_type == "Focal":
             # compute focal term
@@ -206,7 +205,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                                                         soft_targets, reduction="none")
             else:
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
-                focal_term = torch.pow(1. - soft_probs, self.gamma)
+                focal_term = torch.pow(1. - torch.exp(-soft_ce), self.gamma)
 
             if self.normalized:
                 norm_factor = 1.0 / (focal_term.sum() + 1e-5)
@@ -215,13 +214,13 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             if self.verbose > 0:
                 print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
                 print("norm_factor: {0}".format(norm_factor))
-            focal_classification_loss = focal_term * norm_factor * (self.loss_wts.student * classification_loss + self.loss_wts.distill * soft_targets)
+            focal_classification_loss = self.alpha * focal_term * norm_factor * soft_kl_div #+ self.loss_wts.student) * classification_loss.reshape(batch_size, num_boxes)/num_classes)
             overall_loss = focal_classification_loss.sum() + regression_loss.sum() #TODO
         else:
-            overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * kl_div_soft
+            overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * soft_kl_div
 
         if self.verbose > 0:
-            print("kl_div_soft shape:{0} range:[{1}, {2}]".format(kl_div_soft.shape, torch.min(kl_div_soft), torch.max(kl_div_soft)))
+            print("soft_kl_div shape:{0} range:[{1}, {2}]".format(soft_kl_div.shape, torch.min(soft_kl_div), torch.max(soft_kl_div)))
             print("overall_loss(reduced): {0}".format(overall_loss))
             print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
 
@@ -232,5 +231,5 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                     ])
         else:
             return PolicyLoss(overall_loss, [
-                        LossComponent('kl_div_soft', kl_div_soft),
+                        LossComponent('soft_kl_div', soft_kl_div),
                     ])
