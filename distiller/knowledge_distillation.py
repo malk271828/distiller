@@ -192,7 +192,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
         # https://pytorch.org/docs/stable/nn.html#kldivloss
         # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-        soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
+        # soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
         soft_ce = - soft_log_probs * soft_targets.detach()
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
@@ -214,20 +214,25 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             if self.verbose > 0:
                 print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
                 print("norm_factor: {0}".format(norm_factor))
-            focal_classification_loss = self.alpha * focal_term * norm_factor * soft_kl_div #+ self.loss_wts.student) * classification_loss.reshape(batch_size, num_boxes)/num_classes)
-            overall_loss = focal_classification_loss.sum() + regression_loss.sum() #TODO
+            focal_distillation_loss = self.alpha * focal_term * norm_factor * soft_ce
+            sum_focal_distillation_loss = focal_distillation_loss.sum() / (batch_size * num_boxes)
+            sum_classification_loss = classification_loss.sum()
+            sum_regression_loss = regression_loss.sum()
+            overall_loss = self.loss_wts.distill * sum_focal_distillation_loss + self.loss_wts.student * (sum_regression_loss + sum_classification_loss)
         else:
-            overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * soft_kl_div
+            overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * soft_ce
 
         if self.verbose > 0:
-            print("soft_kl_div shape:{0} range:[{1}, {2}]".format(soft_kl_div.shape, torch.min(soft_kl_div), torch.max(soft_kl_div)))
+            if "soft_kl_div" in locals():
+                print("soft_kl_div shape:{0} range:[{1}, {2}]".format(soft_kl_div.shape, torch.min(soft_kl_div), torch.max(soft_kl_div)))
             print("overall_loss(reduced): {0}".format(overall_loss))
             print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
 
         if self.loss_type == "Focal":
             return PolicyLoss(overall_loss, [
-                        LossComponent('focal classification Loss', focal_classification_loss.sum()),
-                        LossComponent('regression Loss', regression_loss.sum())
+                        LossComponent('focal distillation Loss', sum_focal_distillation_loss),
+                        LossComponent('hard classification Loss', sum_classification_loss),
+                        LossComponent('hard regression Loss', sum_regression_loss)
                     ])
         else:
             return PolicyLoss(overall_loss, [
