@@ -21,6 +21,7 @@ from colorama import *
 init()
 
 from .policy import ScheduledTrainingPolicy, PolicyLoss, LossComponent
+from pytorch_toolbelt.losses.focal import FocalLoss
 
 DistillationLossWeights = namedtuple('DistillationLossWeights',
                                      ['distill', 'student', 'teacher'])
@@ -112,8 +113,11 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.alpha = 0.25
         self.normalized = False
 
-        self.binary = False
+        self.use_tb = True
         self.verbose = verbose
+
+        if self.use_tb:
+            self.criterion = FocalLoss(reduction="none", verbose=0)
 
     def forward(self, *inputs):
         """
@@ -189,32 +193,32 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             print("soft_targets shape:{0} range [{1}, {2}]".format(soft_targets.shape, torch.min(soft_targets), torch.max(soft_targets)))
             print("soft_probs shape:{0} range:[{1}, {2}]".format(soft_probs.shape, torch.min(soft_probs), torch.max(soft_probs)))
 
-        # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
-        # https://pytorch.org/docs/stable/nn.html#kldivloss
-        # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-        # soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
-        soft_ce = - soft_log_probs * soft_targets.detach()
-
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
 
         if self.loss_type == "Focal":
             # compute focal term
-            if self.binary:
-                logpt = F.binary_cross_entropy_with_logits(self.last_students_logits/self.temperature,
-                                                        soft_targets, reduction="none")
+            if self.use_tb:
+                # use 3rd party tool (pytorch-toolbelt)
+                # https://github.com/BloodAxe/pytorch-toolbelt/blob/develop/pytorch_toolbelt/losses/focal.py
+                focal_distillation_loss = self.criterion(self.last_students_logits/self.temperature, soft_targets)
             else:
+                # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
+                # https://pytorch.org/docs/stable/nn.html#kldivloss
+                # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
+                # soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
+                soft_ce = - soft_log_probs * soft_targets.detach()
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
                 focal_term = torch.pow(1. - torch.exp(-soft_ce), self.gamma)
 
-            if self.normalized:
-                norm_factor = 1.0 / (focal_term.sum() + 1e-5)
-            else:
-                norm_factor = 1.0
-            if self.verbose > 0:
-                print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
-                print("norm_factor: {0}".format(norm_factor))
-            focal_distillation_loss = self.alpha * focal_term * norm_factor * soft_ce
+                if self.normalized:
+                    norm_factor = 1.0 / (focal_term.sum() + 1e-5)
+                else:
+                    norm_factor = 1.0
+                if self.verbose > 0:
+                    print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
+                    print("norm_factor: {0}".format(norm_factor))
+                focal_distillation_loss = self.alpha * focal_term * norm_factor * soft_ce
             sum_focal_distillation_loss = focal_distillation_loss.sum() / (batch_size * num_boxes)
             sum_classification_loss = classification_loss.sum()
             sum_regression_loss = regression_loss.sum()
