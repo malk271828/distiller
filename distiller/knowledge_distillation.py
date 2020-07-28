@@ -114,10 +114,13 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.normalized = False
 
         self.use_tb = True
+        self.cls_dim = 1
         self.verbose = verbose
 
         if self.use_tb:
-            self.criterion = FocalLoss(reduction="none", verbose=0)
+            self.criterion = FocalLoss(reduction="none", cls_dim=self.cls_dim, verbose=verbose)
+        else:
+            self.criterion = None
 
     def forward(self, *inputs):
         """
@@ -201,7 +204,10 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             if self.use_tb:
                 # use 3rd party tool (pytorch-toolbelt)
                 # https://github.com/BloodAxe/pytorch-toolbelt/blob/develop/pytorch_toolbelt/losses/focal.py
-                focal_distillation_loss = self.criterion(self.last_students_logits/self.temperature, soft_targets)
+                if self.cls_dim == 1:
+                    focal_distillation_loss = self.criterion(self.last_students_logits.reshape(-1, num_classes)/self.temperature, soft_targets.reshape(-1, num_classes))
+                elif self.cls_dim == 2:
+                    focal_distillation_loss = self.criterion(self.last_students_logits/self.temperature, soft_targets)
             else:
                 # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
                 # https://pytorch.org/docs/stable/nn.html#kldivloss
