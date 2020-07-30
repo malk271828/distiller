@@ -26,6 +26,9 @@ from pytorch_toolbelt.losses.focal import FocalLoss
 DistillationLossWeights = namedtuple('DistillationLossWeights',
                                      ['distill', 'student', 'teacher'])
 
+def showTensor(v, name):
+    print(name + " shape:{0} range:[{1}, {2}]".format(v.shape, torch.min(v), torch.max(v)))
+
 def add_distillation_args(argparser, arch_choices=None, enable_pretrained=False):
     """
     Helper function to make it easier to add command line arguments for knowledge distillation to any script
@@ -52,8 +55,8 @@ def add_distillation_args(argparser, arch_choices=None, enable_pretrained=False)
                        help='Weight for teacher vs. labels loss')
     group.add_argument('--kd-start-epoch', type=int, default=0, metavar='EPOCH_NUM',
                        help='Epoch from which to enable distillation')
-    group.add_argument('--kd-loss_type', dest='loss_type', default="KL",
-                       help='specify distillation loss type')
+    group.add_argument('--kd-loss-type', dest='kd_loss_type', default="KL",
+                       help='specify knowledge distillation loss type')
 
 class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
     """
@@ -90,6 +93,8 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
     def __init__(self, student_model, teacher_model, temperature=1.0,
                  loss_weights=DistillationLossWeights(0.5, 0.5, 0),
                  loss_type: str = "KL",
+                 use_focal: bool = True,
+                 use_tb: bool = False,
                  verbose: int = 0):
         super(KnowledgeDistillationPolicy, self).__init__()
 
@@ -104,16 +109,21 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         self.temperature = temperature
         self.loss_wts = loss_weights
         self.loss_type = loss_type
+        self.batch_size = None
+        self.num_boxes = None
+        self.num_classes = None
 
         self.last_students_logits = None
         self.last_teacher_logits = None
 
         # for Focal loss
         self.gamma = 2
-        self.alpha = 0.25
+        self.alpha = 1.00
         self.normalized = False
 
-        self.use_tb = True
+        self.distance_type = "KL"
+        self.use_focal = use_focal
+        self.use_tb = use_tb
         self.cls_dim = 1
         self.verbose = verbose
 
@@ -140,7 +150,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             self.last_teacher_logits, _ = self.teacher(*inputs)
 
         confidence, localization = self.student(*inputs)
-        self.last_students_logits = confidence.new_tensor(confidence, requires_grad=True)
+        self.last_students_logits = confidence.clone()
 
         return confidence, localization
 
@@ -179,42 +189,60 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                                "Make sure to call KnowledgeDistillationPolicy.forward() in your script instead of "
                                "calling the model directly.")
 
-        # Calculate distillation loss
-        soft_log_probs = F.log_softmax(self.last_students_logits / self.temperature, dim=2)
-        soft_targets = F.softmax(self.last_teacher_logits / self.temperature, dim=2)
-        soft_probs = soft_log_probs.exp() # same result to F.softmax(self.last_students_logits / self.temperature, dim=2)
+        if self.batch_size is None:
+            self.batch_size = self.last_students_logits.shape[0]
+        if self.num_boxes is None:
+            self.num_boxes = self.last_students_logits.shape[1]
+        if self.num_classes is None:
+            self.num_classes = self.last_students_logits.shape[2]
 
-        batch_size = soft_targets.shape[0]
+        # extract hard-target loss
         if isinstance(loss, tuple):
             regression_loss, classification_loss = loss
-            num_boxes = soft_targets.shape[1]
-            num_classes = soft_targets.shape[2]
+            if self.verbose > 0:
+                showTensor(regression_loss, "regression_loss")
+                showTensor(classification_loss, "classification_loss")
+            num_pos = self.num_boxes * self.num_classes
 
-        if self.verbose > 1:
+        # Calculate distillation loss
+        soft_log_probs = F.log_softmax(self.last_students_logits.reshape(-1, self.num_classes) / self.temperature, dim=1)
+        soft_targets = F.softmax(self.last_teacher_logits.reshape(-1, self.num_classes) / self.temperature, dim=1)
+        #soft_probs = soft_log_probs.exp() # same result to F.softmax(self.last_students_logits / self.temperature, dim=2)
+
+        if self.verbose > 0:
             print("last_students_logits shape:{0} range [{1}, {2}]".format(self.last_students_logits.shape, torch.min(self.last_students_logits), torch.max(self.last_students_logits)))
             print("last_teacher_logits shape:{0} range [{1}, {2}]".format(self.last_teacher_logits.shape, torch.min(self.last_teacher_logits), torch.max(self.last_teacher_logits)))
-            print("soft_targets shape:{0} range [{1}, {2}]".format(soft_targets.shape, torch.min(soft_targets), torch.max(soft_targets)))
-            print("soft_probs shape:{0} range:[{1}, {2}]".format(soft_probs.shape, torch.min(soft_probs), torch.max(soft_probs)))
+            showTensor(soft_log_probs, "soft_log_probs")
+            showTensor(soft_targets, "soft_targets")
 
         # The loss passed to the callback is the student's loss vs. the true labels, so we can use it directly, no
         # need to calculate again
 
-        if self.loss_type == "Focal":
+        # Each element of KL divergence can be negative value. But, the sum of them must be non-negative.
+        # https://stats.stackexchange.com/a/41300
+        if self.distance_type == "KL":
+            soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach()+1.0e-20, reduction="none")
+        else:
+            raise Exception("unknown loss type")
+
+        if self.use_focal:
             # compute focal term
             if self.use_tb:
                 # use 3rd party tool (pytorch-toolbelt)
                 # https://github.com/BloodAxe/pytorch-toolbelt/blob/develop/pytorch_toolbelt/losses/focal.py
+                if self.verbose > 0:
+                    print("use pytorch-toolbelt")
                 if self.cls_dim == 1:
-                    focal_distillation_loss = self.criterion(self.last_students_logits.reshape(-1, num_classes)/self.temperature, soft_targets.reshape(-1, num_classes))
+                    focal_distillation_loss = self.criterion(self.last_students_logits.reshape(-1, self.num_classes)/self.temperature, soft_targets.reshape(-1, self.num_classes))
                 elif self.cls_dim == 2:
                     focal_distillation_loss = self.criterion(self.last_students_logits/self.temperature, soft_targets)
             else:
                 # The averaging used in PyTorch KL Div implementation is wrong, so we work around as suggested in
                 # https://pytorch.org/docs/stable/nn.html#kldivloss
                 # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
-                # soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none") / batch_size
-                soft_ce = - soft_log_probs * soft_targets.detach()
+
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
+                soft_ce = - soft_log_probs * soft_targets.detach()
                 focal_term = torch.pow(1. - torch.exp(-soft_ce), self.gamma)
 
                 if self.normalized:
@@ -224,21 +252,21 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                 if self.verbose > 0:
                     print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
                     print("norm_factor: {0}".format(norm_factor))
-                focal_distillation_loss = self.alpha * focal_term * norm_factor * soft_ce
-            sum_focal_distillation_loss = focal_distillation_loss.sum() / (batch_size * num_boxes)
+                focal_distillation_loss = self.alpha * focal_term.reshape(-1, self.num_classes) * norm_factor * soft_kl_div
+            sum_focal_distillation_loss = focal_distillation_loss.sum() / num_pos
             sum_classification_loss = classification_loss.sum()
             sum_regression_loss = regression_loss.sum()
             overall_loss = self.loss_wts.distill * sum_focal_distillation_loss + self.loss_wts.student * (sum_regression_loss + sum_classification_loss)
         else:
-            overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * soft_ce
+            overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * soft_kl_div
 
         if self.verbose > 0:
-            if "soft_kl_div" in locals():
-                print("soft_kl_div shape:{0} range:[{1}, {2}]".format(soft_kl_div.shape, torch.min(soft_kl_div), torch.max(soft_kl_div)))
+            showTensor(soft_ce, "soft_ce")
+            showTensor(soft_kl_div, "soft_kl_div")
             print("overall_loss(reduced): {0}".format(overall_loss))
             print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
 
-        if self.loss_type == "Focal":
+        if self.use_focal:
             return PolicyLoss(overall_loss, [
                         LossComponent('focal distillation Loss', sum_focal_distillation_loss),
                         LossComponent('hard classification Loss', sum_classification_loss),
@@ -246,5 +274,5 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                     ])
         else:
             return PolicyLoss(overall_loss, [
-                        LossComponent('soft_kl_div', soft_kl_div),
+                        LossComponent('soft_distance', soft_distance),
                     ])
