@@ -14,6 +14,7 @@
 # limitations under the License.
 #
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from collections import namedtuple
@@ -221,7 +222,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         # Each element of KL divergence can be negative value. But, the sum of them must be non-negative.
         # https://stats.stackexchange.com/a/41300
         if self.distance_type == "KL":
-            soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach()+1.0e-20, reduction="none")
+            soft_kl_div = F.kl_div(soft_log_probs, soft_targets.detach(), reduction="none")
         else:
             raise Exception("unknown loss type")
 
@@ -242,7 +243,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                 # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
 
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
-                soft_ce = - soft_log_probs * soft_targets.detach()
+                soft_ce = - (np.log(self.alpha) + soft_log_probs) * (1 - self.alpha) * soft_targets.detach()
                 focal_term = torch.pow(1. - torch.exp(-soft_ce), self.gamma)
 
                 if self.normalized:
@@ -252,7 +253,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                 if self.verbose > 0:
                     print("focal_term shape:{0} range[{1}, {2}]".format(focal_term.shape, torch.min(focal_term), torch.max(focal_term)))
                     print("norm_factor: {0}".format(norm_factor))
-                focal_distillation_loss = self.alpha * focal_term.reshape(-1, self.num_classes) * norm_factor * soft_kl_div
+                focal_distillation_loss = focal_term.reshape(-1, self.num_classes) * norm_factor * soft_kl_div
             sum_focal_distillation_loss = focal_distillation_loss.sum() / num_pos
             sum_classification_loss = classification_loss.sum()
             sum_regression_loss = regression_loss.sum()
