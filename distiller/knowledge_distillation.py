@@ -58,6 +58,8 @@ def add_distillation_args(argparser, arch_choices=None, enable_pretrained=False)
                        help='Epoch from which to enable distillation')
     group.add_argument('--kd-loss-type', dest='kd_loss_type', default="KL",
                        help='specify knowledge distillation loss type')
+    group.add_argument('--kd-focal-alpha', type=float, dest='kd_focal_alpha', default="0.5",
+                       help='balancing factor')
 
 class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
     """
@@ -93,8 +95,11 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
     """
     def __init__(self, student_model, teacher_model, temperature=1.0,
                  loss_weights=DistillationLossWeights(0.5, 0.5, 0),
+                 *,
                  loss_type: str = "KL",
                  use_focal: bool = True,
+                 use_adaptive: bool = False,
+                 focal_alpha: float = 0.5,
                  use_tb: bool = False,
                  verbose: int = 0):
         super(KnowledgeDistillationPolicy, self).__init__()
@@ -119,11 +124,13 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
         # for Focal loss
         self.gamma = 2
-        self.alpha = 1.00
+        self.alpha = focal_alpha
+        self.beta = 1.50
         self.normalized = False
 
         self.distance_type = "KL"
         self.use_focal = use_focal
+        self.use_adaptive = use_adaptive
         self.use_tb = use_tb
         self.cls_dim = 1
         self.verbose = verbose
@@ -243,8 +250,19 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                 # (Also see https://github.com/pytorch/pytorch/issues/6622, https://github.com/pytorch/pytorch/issues/2259)
 
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
-                soft_ce = - (np.log(self.alpha) + soft_log_probs) * (1 - self.alpha) * soft_targets.detach()
-                focal_term = torch.pow(1. - torch.exp(-soft_ce), self.gamma)
+                if self.use_adaptive:
+                    # https://discuss.pytorch.org/t/calculating-the-entropy-loss/14510
+                    if self.verbose > 0:
+                        print("use automated adaptative distillation")
+                    soft_distance = soft_kl_div - self.beta * (soft_targets * soft_targets.log())
+                else:
+                    if abs(self.alpha) < 1.0e-10 or abs(self.alpha - 1.0) < 1.0e-10:
+                        soft_distance = - soft_log_probs * soft_targets.detach()
+                    else:
+                        if self.verbose > 0:
+                            print("use alpha balancing")
+                        soft_distance = - (np.log(self.alpha) + soft_log_probs) * (1 - self.alpha) * soft_targets.detach()
+                focal_term = torch.pow(1. - torch.exp( - soft_distance), self.gamma)
 
                 if self.normalized:
                     norm_factor = 1.0 / (focal_term.sum() + 1e-5)
@@ -262,7 +280,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
             overall_loss = self.loss_wts.student * loss + self.loss_wts.distill * soft_kl_div
 
         if self.verbose > 0:
-            showTensor(soft_ce, "soft_ce")
+            showTensor(soft_distance, "soft_distance")
             showTensor(soft_kl_div, "soft_kl_div")
             print("overall_loss(reduced): {0}".format(overall_loss))
             print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
