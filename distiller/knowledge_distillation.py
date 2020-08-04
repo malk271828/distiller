@@ -257,7 +257,8 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                     # https://discuss.pytorch.org/t/calculating-the-entropy-loss/14510
                     if self.verbose > 0:
                         print("use automated adaptative distillation")
-                    soft_distance = soft_kl_div - self.beta * (soft_targets * soft_targets.log())
+                    soft_log_targets = F.log_softmax(self.last_teacher_logits.reshape(-1, self.num_classes) / self.temperature, dim=1)
+                    soft_distance = soft_kl_div + self.beta * (- soft_targets * soft_log_targets)
                 else:
                     if abs(self.alpha) < 1.0e-10 or abs(self.alpha - 1.0) < 1.0e-10:
                         if self.verbose > 0:
