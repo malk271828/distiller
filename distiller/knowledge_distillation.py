@@ -60,6 +60,8 @@ def add_distillation_args(argparser, arch_choices=None, enable_pretrained=False)
                        help='specify knowledge distillation loss type')
     group.add_argument('--kd-focal-alpha', type=float, dest='kd_focal_alpha', default="0.5",
                        help='balancing factor')
+    group.add_argument('--kd-focal-adaptive', type=bool, dest='kd_focal_adaptive', default=False,
+                       help='use adaptive focal distillation')
 
 class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
     """
@@ -251,16 +253,19 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
 
                 # https://kornia.readthedocs.io/en/latest/_modules/kornia/losses/focal.html#FocalLoss
                 if self.use_adaptive:
+                    # Normal entropy is calculated by multiplying probability and log-probability
                     # https://discuss.pytorch.org/t/calculating-the-entropy-loss/14510
                     if self.verbose > 0:
                         print("use automated adaptative distillation")
                     soft_distance = soft_kl_div - self.beta * (soft_targets * soft_targets.log())
                 else:
                     if abs(self.alpha) < 1.0e-10 or abs(self.alpha - 1.0) < 1.0e-10:
+                        if self.verbose > 0:
+                            print("Alpha-balancing is disabled")
                         soft_distance = - soft_log_probs * soft_targets.detach()
                     else:
                         if self.verbose > 0:
-                            print("use alpha balancing")
+                            print("Alpha-balancing is enabled")
                         soft_distance = - (np.log(self.alpha) + soft_log_probs) * (1 - self.alpha) * soft_targets.detach()
                 focal_term = torch.pow(1. - torch.exp( - soft_distance), self.gamma)
 
