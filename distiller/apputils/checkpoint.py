@@ -84,6 +84,9 @@ def save_checkpoint(epoch, arch, model, optimizer=None, scheduler=None,
     if is_best:
         shutil.copyfile(fullpath, fullpath_best)
         model.save(raw_fullpath_best)
+        return raw_fullpath_best
+    else:
+        raise Exception
 
 def load_lean_checkpoint(model, chkpt_file, model_device=None):
     return load_checkpoint(model, chkpt_file, model_device=model_device,
