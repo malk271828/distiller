@@ -27,6 +27,8 @@ from pytorch_toolbelt.losses.focal import FocalLoss
 DistillationLossWeights = namedtuple('DistillationLossWeights',
                                      ['distill', 'student', 'teacher'])
 
+EPSILON = 1.0e-10
+
 def showTensor(v, name):
     print(name + " shape:{0} range:[{1}, {2}]".format(v.shape, torch.min(v), torch.max(v)))
 
@@ -258,9 +260,10 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
                     if self.verbose > 0:
                         print("use automated adaptative distillation")
                     soft_log_targets = F.log_softmax(self.last_teacher_logits.reshape(-1, self.num_classes) / self.temperature, dim=1)
-                    soft_distance = soft_kl_div + self.beta * (- soft_targets * soft_log_targets)
+                    entropy_target = torch.mean(- soft_targets * soft_log_targets, dim=1).unsqueeze(1).expand(-1, self.num_classes)
+                    soft_distance = soft_kl_div + self.beta * entropy_target
                 else:
-                    if abs(self.alpha) < 1.0e-10 or abs(self.alpha - 1.0) < 1.0e-10:
+                    if abs(self.alpha) < EPSILON or abs(self.alpha - 1.0) < EPSILON:
                         if self.verbose > 0:
                             print("Alpha-balancing is disabled")
                         soft_distance = - soft_log_probs * soft_targets.detach()
@@ -288,6 +291,7 @@ class KnowledgeDistillationPolicy(ScheduledTrainingPolicy):
         if self.verbose > 0:
             showTensor(soft_distance, "soft_distance")
             showTensor(soft_kl_div, "soft_kl_div")
+            showTensor(entropy_target, "entropy_target")
             print("overall_loss(reduced): {0}".format(overall_loss))
             print(Fore.CYAN + "KnowledgeDistillationPolicy.before_backward_pass [out] -------------------------" + Style.RESET_ALL)
 
